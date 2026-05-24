@@ -306,6 +306,6 @@ Git submodule化はしていません。
 
 ## License
 
-このプロジェクトはMIT Licenseで公開することを想定しています。
+MIT License
 
 外部ライブラリであるFreeRTOS-Kernel、Pico SDKなどについては、それぞれのライセンスに従ってください。
