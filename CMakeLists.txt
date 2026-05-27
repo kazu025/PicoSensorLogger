@@ -27,6 +27,7 @@ src/AEADT7410.cpp
 src/AQM0802.cpp
 src/TemperatureTask.cpp
 src/board_i2c.cpp
+src/ButtonTask.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

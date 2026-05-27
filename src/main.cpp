@@ -8,6 +8,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 #include "semphr.h"
+#include "queue.h"
 
 #include "UartDma.h"
 #include "EventLogger.h"
@@ -20,6 +21,8 @@
 #include "AQM0802.h"
 #include "TemperatureTask.h"
 #include "board_i2c.h"
+#include "DisplayMode.h"
+#include "ButtonTask.h"
 static FlashDriver* g_flash_driver = nullptr;
 static FlashLogStorage* g_log_storage = nullptr;
 static UartDma* g_uart_dma = nullptr;
@@ -31,19 +34,20 @@ static constexpr uint LOGGER_TASK_STACK_WORDS           = 1024; // word
 static constexpr uint COMMAND_TASK_STACK_WORDS          = 1024; // word
 static constexpr uint ADCONVERT_TASK_STACK_WORDS        = 512;  // word
 static constexpr uint TEMPERATURE_TASK_STACK_WORDS      = 768;  // word
-
+static constexpr uint BUTTON_TASK_STACK_WORDS           = 512;
 // タスク優先度: 0(最小) 〜 configMAX_PRIORITIES - 1(最大)
 static constexpr UBaseType_t LOGGER_TASK_PRIORITY       = 3;
 static constexpr UBaseType_t COMMAND_TASK_PRIORITY      = 2;
 static constexpr UBaseType_t ADCONVERT_TASK_PRIORITY    = 1;
 static constexpr UBaseType_t TEMPERATURE_TASK_PRIORITY  = 1;
+static constexpr UBaseType_t BUTTON_TASK_PRIORITY       = 1;
 
 // Flash Log領域
 static constexpr uint32_t LOG_START_ADDR = 0x00001000;
 static constexpr uint32_t LOG_END_ADDR   = 0x00101000;
 
 static AppContext app_ctx;
-
+static QueueHandle_t display_mode_queue = nullptr;
 static void getFreeHeapSize(const char *s)
 {
     printf("%s : %lu\n", s, static_cast<unsigned long>(xPortGetFreeHeapSize()));
@@ -65,7 +69,7 @@ int main()
         UartDma::UART_RX_PIN);
     if(!uart_dma.init()){
         printf("!!! UartDma.init() failed\n");
-        while(true) tight_loop_contents();
+        while(true)     tight_loop_contents();
     }
     g_uart_dma = &uart_dma;
 
@@ -80,7 +84,7 @@ int main()
         FlashDriver::SPI_BAUDRATE_10M);
     if(!flash.init()){
         printf("!!! FlashDriver.init() failed\n");
-        while(true) tight_loop_contents();
+        while(true)     tight_loop_contents();
     }
     g_flash_driver = &flash;
     
@@ -90,7 +94,7 @@ int main()
     static FlashLogStorage storage(flash, LOG_START_ADDR, LOG_END_ADDR);
     if(!storage.init()){
         printf("!!! storage.init() : failed\n");
-        while(true) tight_loop_contents();
+        while(true)     tight_loop_contents();
     }
     g_log_storage = &storage;
     
@@ -100,7 +104,7 @@ int main()
     static EventLogger logger(uart_dma, &storage);
     if(!logger.init(32)){
         printf("!!! logger.init() failed\n");
-        while(true) tight_loop_contents();
+        while(true)     tight_loop_contents();
     }
     if(storage.getCount() > 0){
         logger.setNextSeq(storage.getNewestSeq() + 1);
@@ -120,12 +124,21 @@ int main()
     SemaphoreHandle_t i2c_mutex = xSemaphoreCreateMutex();
     if(i2c_mutex == nullptr){
         printf("!!! xSemaphoreCreateMutex(i2c) failed\n");
-        while(true) tight_loop_contents();
+        while(true)     tight_loop_contents();
     }
 
     static AEADT7410 adt7410(i2c0, AEADT7410::DEFAULT_ADDR, i2c_mutex);
     static AQM0802 aqm0802(i2c0, AQM0802::DEFAULT_ADDR, i2c_mutex);
 
+    /* ----------------------------------*/
+    /* === DisplayMode Queue         === */
+    /* ----------------------------------*/
+    display_mode_queue = xQueueCreate(1, sizeof(DisplayMode));
+
+    if(display_mode_queue == nullptr){
+        printf("!!! xQueueCreate(display_mode_queue) failed\n");
+        while(true)     tight_loop_contents();
+    }
     /* ============================== */
     /* === logger task            === */
     /* ============================== */
@@ -138,7 +151,7 @@ int main()
         nullptr);
     if(ok != pdPASS){
         printf("!!! xTaskCreate(logger) failed\n");
-        while(true) tight_loop_contents();
+        while(true)  tight_loop_contents();
     }
     getFreeHeapSize("Logger task");
 
@@ -154,7 +167,7 @@ int main()
         nullptr);
     if(ok != pdPASS){
         printf("!!! xTaskCreate(adc_task) failed\n");
-        while(true) tight_loop_contents();
+        while(true)     tight_loop_contents();
     }
     getFreeHeapSize("ADconverter task");
 
@@ -174,7 +187,7 @@ int main()
         nullptr);
     if(ok != pdPASS){
         printf("!!! xTaskCreate(command_task) failed\n");
-        while(true) tight_loop_contents();
+        while(true)     tight_loop_contents();
     }
     getFreeHeapSize("Command task");
 
@@ -184,7 +197,8 @@ int main()
     static TemperatureTaskContext temperature_ctx = {
         &adt7410,
         &aqm0802,
-        &logger};
+        &logger,
+        display_mode_queue};
     ok = xTaskCreate(
         temperature_task,
         "temperature",
@@ -194,10 +208,27 @@ int main()
         nullptr);
     if(ok != pdPASS){
         printf("!!! xTaskCreate(temperature_task) failed\n");
-        while(true) tight_loop_contents();
+        while(true)     tight_loop_contents();
     }
     getFreeHeapSize("Temperature task");
 
+    /* ============================== */
+    /* === Button Task            === */
+    /* ============================== */
+    static ButtonTaskContext button_ctx = {
+        display_mode_queue
+    };
+    ok = xTaskCreate(button_task,
+        "button",
+        BUTTON_TASK_STACK_WORDS,
+        &button_ctx,
+        BUTTON_TASK_PRIORITY,
+        nullptr);
+    if(ok != pdPASS){
+        printf("!!! xTaskCreate(button_task) failed\n");
+        while(true)     tight_loop_contents();
+    }
+    getFreeHeapSize("Button task");
     /* ------------------- */
     /* スケジューラ        */
     /* ------------------- */

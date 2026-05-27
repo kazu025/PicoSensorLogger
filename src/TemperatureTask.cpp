@@ -4,73 +4,40 @@
 #include "pico/stdlib.h"
 #include "FreeRTOS.h"
 #include "task.h"
+#include "queue.h"
 
 #include "CommandTask.h"
 #include "LogTypes.h"
 #include "led25.h"
+#include "DisplayMode.h"
 
 static constexpr uint32_t TASK_PERIOD_MS = 1000;
 static constexpr bool ENABLE_TASK_START_LOG = true;
 static constexpr bool ENABLE_STACK_HWM_LOG = true;
 static constexpr uint32_t HWM_LOG_INTERVAL_COUNT = 60;
 
-static void log_temperature(
-    EventLogger* logger,
-    uint32_t timestamp_ms,
-    float temperature_c,
-    bool valid
-)
-{
-    if(logger == nullptr || isLogPaused()){
-        return;
-    }
+static void log_temperature(EventLogger* logger, uint32_t timestamp_ms, float temperature_c, bool valid) {
+    if(logger == nullptr || isLogPaused()){ return; }
 
-    logger->logf(
-        LogLevel::INFO,
-        "TEMP,%lu,%.6f,%s",
+    logger->logf(LogLevel::INFO, "TEMP,%lu,%.6f,%s",
         static_cast<unsigned long>(timestamp_ms),
         static_cast<double>(temperature_c),
         valid ? "OK" : "NG"
     );
 }
 
-static void display_temperature(
-    AQM0802* lcd,
-    bool valid,
-    uint32_t count,
-    float temperature_c
-)
-{
-    if(lcd == nullptr){
-        return;
-    }
+static void display_temperature(AQM0802* lcd, bool valid, uint32_t count, float temperature_c) {
+    if(lcd == nullptr){ return; }
 
     char line1[9];
     char line2[9];
-
     if(valid){
-        snprintf(
-            line1,
-            sizeof(line1),
-            "T:%5.2f",
-            static_cast<double>(temperature_c)
-        );
-        snprintf(
-            line2,
-            sizeof(line2),
-            "OK %04lu",
-            static_cast<unsigned long>(count % 10000)
-        );
+        snprintf(line1, sizeof(line1), "T:%5.2f", static_cast<double>(temperature_c));
+        snprintf(line2, sizeof(line2), "OK %04lu", static_cast<unsigned long>(count % 10000));
     }else{
         snprintf(line1, sizeof(line1), "T:--.--");
-        snprintf(
-            line2,
-            sizeof(line2),
-            "NG %04lu",
-            static_cast<unsigned long>(count % 10000)
-        );
+        snprintf(line2, sizeof(line2), "NG %04lu", static_cast<unsigned long>(count % 10000));
     }
-
     lcd->printLine(0, line1);
     lcd->printLine(1, line2);
 }
@@ -78,10 +45,17 @@ static void display_temperature(
 void temperature_task(void* param)
 {
     auto* ctx = static_cast<TemperatureTaskContext*>(param);
+    DisplayMode current_mode = DisplayMode::Temperature;
 
     if(ctx == nullptr || ctx->sensor == nullptr){
         vTaskDelete(nullptr);
         return;
+    }
+    if(ctx->lcd==nullptr){
+        printf("temperature_task: LCD not available\n");
+    }
+    if(ctx->display_mode_queue == nullptr){
+        printf("temperature_task: display_mode_queue not available\n");
     }
 
     led_init();
@@ -102,16 +76,13 @@ void temperature_task(void* param)
         }
 
         if(ctx->logger != nullptr && !isLogPaused()){
-            ctx->logger->logf(
-                LogLevel::INFO,
-                lcd_initialized ? "AQM0802 init OK" : "AQM0802 init NG"
-            );
+            ctx->logger->logf(LogLevel::INFO, lcd_initialized ? "AQM0802 init OK" : "AQM0802 init NG");
         }
     }
 
     while(true){
         uint32_t timestamp_ms = to_ms_since_boot(get_absolute_time());
-
+        
         /*
          * 初期化されていない場合は、毎周期 init() を再試行する。
          * 起動時にセンサ未接続でも、後から接続/復帰できる。
@@ -119,7 +90,6 @@ void temperature_task(void* param)
         if(!ctx->sensor->isInitialized()){
             if(!ctx->sensor->init()){
                 log_temperature(ctx->logger, timestamp_ms, 0.0f, false);
-
                 if(lcd_initialized){
                     display_temperature(ctx->lcd, false, count, 0.0f);
                 }
@@ -147,28 +117,47 @@ void temperature_task(void* param)
 
         log_temperature(ctx->logger, timestamp_ms, temperature_c, valid);
 
-        if(lcd_initialized){
-            display_temperature(ctx->lcd, valid, count, temperature_c);
-        }
-
-        count++;
-
-        if(ENABLE_STACK_HWM_LOG &&
-           ctx->logger != nullptr &&
-           !isLogPaused() &&
-           ((count % HWM_LOG_INTERVAL_COUNT) == 0)){
-
+        
+        if(ENABLE_STACK_HWM_LOG &&ctx->logger != nullptr && !isLogPaused() &&
+        ((count % HWM_LOG_INTERVAL_COUNT) == 0)){
+            
             UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
-
-            ctx->logger->logf(
-                LogLevel::INFO,
-                "TEMP_TASK_HWM,%lu",
-                static_cast<unsigned long>(hwm)
-            );
+            ctx->logger->logf(LogLevel::INFO, "TEMP_TASK_HWM,%lu",static_cast<unsigned long>(hwm));
         }
-
+       
+        DisplayMode new_mode;
+        if(xQueueReceive(ctx->display_mode_queue, &new_mode, 0) == pdTRUE){
+            current_mode = new_mode;
+            if(lcd_initialized && ctx->lcd != nullptr){
+                ctx->lcd->clear();
+            }
+            if(ctx->logger != nullptr && !isLogPaused()){
+                ctx->logger->logf(LogLevel::INFO, "DisplayMode changed: %d", static_cast<int>(current_mode));
+            }
+        }
+        if(lcd_initialized){
+            switch(current_mode){
+            case DisplayMode::Temperature:
+                display_temperature(ctx->lcd, valid, count, temperature_c);
+                break;
+            case DisplayMode::AdcVoltage:
+                ctx->lcd->printLine(0, "ADC");
+                ctx->lcd->printLine(1, "active");
+                break;
+            case DisplayMode::LogStatus:
+                ctx->lcd->printLine(0, "LOG");
+                ctx->lcd->printLine(1, "ACTIVE");
+                break;
+            case DisplayMode::I2cInfo:
+                ctx->lcd->printLine(0, "I2C");
+                ctx->lcd->printLine(1, "2 DEV");
+                break;
+            default:
+                break;
+            }
+        }
+        count++;
         led_sw();
-
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(TASK_PERIOD_MS));
     }
 }
