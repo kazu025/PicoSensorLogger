@@ -1,16 +1,16 @@
-#ifndef TASK_H
-#define TASK_H
+#ifndef ADC_LOGGER_TASK_H
+#define ADC_LOGGER_TASK_H
 /* ----------------------------------------------------------- */
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include "pico/stdlib.h"
-#include "FreeRTOS.h"
-#include "task.h"
-#include "EventId.h"
-#include "FlashLogStorage.h"
+#include <stdint.h>
 #include "EventLogger.h"
-#include "LogTypes.h"
+struct AdcLatestValue {
+    uint16_t raw;
+    uint16_t avg;
+    float   voltage;
+    uint32_t timestamp_ms;
+    bool valid;
+};
 void adc_task(void* param);
+AdcLatestValue getAdcLatestValue();
 /* ------------------------------------------------------------ */
-#endif // TASK_H
+#endif // ADC_LOGGER_TASK_H

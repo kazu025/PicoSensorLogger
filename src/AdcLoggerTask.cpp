@@ -5,6 +5,15 @@
 #include "hardware/adc.h"
 #include "utility.h"
 #include "CommandTask.h"
+
+static AdcLatestValue g_adc_latest = {
+    0,
+    0,
+    0.0f,
+    0,
+    false
+};
+/* ADC タスク */
 void adc_task(void *param){
     auto* logger = static_cast<EventLogger*>(param);
 
@@ -22,7 +31,14 @@ void adc_task(void *param){
         adc_avg.add(raw);
         uint16_t raw_avg = adc_avg.average();
         float voltage = static_cast<float>(raw_avg) * 3.3f / 4095.0;
-        if(!isLogPaused()){
+        taskENTER_CRITICAL();
+        g_adc_latest.raw = raw;
+        g_adc_latest.avg = raw_avg;
+        g_adc_latest.voltage = voltage;
+        g_adc_latest.timestamp_ms = timestamp_ms;
+        g_adc_latest.valid = true;
+        taskEXIT_CRITICAL();
+        if(logger != nullptr && !isLogPaused()){
             logger->logf(
                 LogLevel::INFO, "ADC,%lu,%u,%u,%.3f",
                 static_cast<unsigned long>(timestamp_ms),
@@ -33,7 +49,14 @@ void adc_task(void *param){
         vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(1000));
     }
 }
-
+/* ADC値を返す */
+AdcLatestValue getAdcLatestValue(){
+    AdcLatestValue value;
+    taskENTER_CRITICAL();
+    value = g_adc_latest;
+    taskEXIT_CRITICAL();
+    return value;
+}
 
 
 

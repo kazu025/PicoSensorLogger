@@ -10,6 +10,7 @@
 #include "LogTypes.h"
 #include "led25.h"
 #include "DisplayMode.h"
+#include "AdcLoggerTask.h"
 
 static constexpr uint32_t TASK_PERIOD_MS = 1000;
 static constexpr bool ENABLE_TASK_START_LOG = true;
@@ -118,39 +119,57 @@ void temperature_task(void* param)
         log_temperature(ctx->logger, timestamp_ms, temperature_c, valid);
 
         
-        if(ENABLE_STACK_HWM_LOG &&ctx->logger != nullptr && !isLogPaused() &&
-        ((count % HWM_LOG_INTERVAL_COUNT) == 0)){
+        if(ENABLE_STACK_HWM_LOG && ctx->logger != nullptr && !isLogPaused() &&
+            count > 0 && ((count % HWM_LOG_INTERVAL_COUNT) == 0)){
             
             UBaseType_t hwm = uxTaskGetStackHighWaterMark(nullptr);
             ctx->logger->logf(LogLevel::INFO, "TEMP_TASK_HWM,%lu",static_cast<unsigned long>(hwm));
         }
-       
-        DisplayMode new_mode;
-        if(xQueueReceive(ctx->display_mode_queue, &new_mode, 0) == pdTRUE){
-            current_mode = new_mode;
-            if(lcd_initialized && ctx->lcd != nullptr){
-                ctx->lcd->clear();
-            }
-            if(ctx->logger != nullptr && !isLogPaused()){
-                ctx->logger->logf(LogLevel::INFO, "DisplayMode changed: %d", static_cast<int>(current_mode));
+        if(ctx->display_mode_queue != nullptr){ 
+            DisplayMode new_mode;
+            if(xQueueReceive(ctx->display_mode_queue, &new_mode, 0) == pdTRUE){
+                current_mode = new_mode;
+                if(lcd_initialized && ctx->lcd != nullptr){
+                    ctx->lcd->clear();
+                }
+                if(ctx->logger != nullptr && !isLogPaused()){
+                    ctx->logger->logf(LogLevel::INFO, "DisplayMode changed: %d", static_cast<int>(current_mode));
+                }
             }
         }
-        if(lcd_initialized){
+        if(lcd_initialized && ctx->lcd != nullptr){
             switch(current_mode){
             case DisplayMode::Temperature:
                 display_temperature(ctx->lcd, valid, count, temperature_c);
                 break;
             case DisplayMode::AdcVoltage:
-                ctx->lcd->printLine(0, "ADC");
-                ctx->lcd->printLine(1, "active");
+            {
+                AdcLatestValue adc = getAdcLatestValue();
+                if(adc.valid){
+                    char line[9];
+
+                    snprintf(line, sizeof(line), "%5.3fV", adc.voltage);
+                    ctx->lcd->printLine(0, "ADC");
+                    ctx->lcd->printLine(1, line);
+                } else {
+                    ctx->lcd->printLine(0, "ADC");
+                    ctx->lcd->printLine(1, "NO DATA");
+                }
                 break;
+            }
             case DisplayMode::LogStatus:
-                ctx->lcd->printLine(0, "LOG");
-                ctx->lcd->printLine(1, "ACTIVE");
+            {
+                char line[9];
+                uint32_t log_count = 0;
+                if(ctx->storage != nullptr) log_count = ctx->storage->getCount();
+                snprintf(line, sizeof(line), "%lu", static_cast<unsigned long>(log_count));
+                ctx->lcd->printLine(0, "LOG CNT");
+                ctx->lcd->printLine(1, line);
                 break;
+            }
             case DisplayMode::I2cInfo:
-                ctx->lcd->printLine(0, "I2C");
-                ctx->lcd->printLine(1, "2 DEV");
+                ctx->lcd->printLine(0, "I2C DEV");
+                ctx->lcd->printLine(1, "3E 48");
                 break;
             default:
                 break;

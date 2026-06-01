@@ -198,6 +198,7 @@ int main()
         &adt7410,
         &aqm0802,
         &logger,
+        &storage,
         display_mode_queue};
     ok = xTaskCreate(
         temperature_task,
