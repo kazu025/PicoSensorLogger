@@ -167,6 +167,63 @@ void temperature_task(void* param)
                 ctx->lcd->printLine(1, line);
                 break;
             }
+            case DisplayMode::BmeTemperature:
+            {
+                if(ctx->bme280 != nullptr){
+                    BME280Values values;
+                    if(ctx->bme280->read(values)){
+                        char line[9];
+                        snprintf(line,  sizeof(line), "%5.2fC", values.temperature_c);
+                        ctx->lcd->printLine(0, "BME T");
+                        ctx->lcd->printLine(1, line);
+                    }else{
+                        ctx->lcd->printLine(0, "BME T");
+                        ctx->lcd->printLine(1, "ERR");
+                    }
+                }else{
+                    ctx->lcd->printLine(0, "BME T");
+                    ctx->lcd->printLine(1, "NO DEV");
+                }
+                break;
+            }
+            case DisplayMode::BmeHumidity:
+            {
+                if(ctx->bme280 != nullptr){
+                    BME280Values values;
+                    if(ctx->bme280->read(values)){
+                        char line[9];
+                        snprintf(line,  sizeof(line), "%5.1f%%", values.humidity_rh);
+                        ctx->lcd->printLine(0, "BME H");
+                        ctx->lcd->printLine(1, line);
+                    }else{
+                        ctx->lcd->printLine(0, "BME H");
+                        ctx->lcd->printLine(1, "ERR");
+                    }
+                }else{
+                    ctx->lcd->printLine(0, "BME H");
+                    ctx->lcd->printLine(1, "NO DEV");
+                }
+                break;
+            }
+            case DisplayMode::BmePressure:
+            {
+                if(ctx->bme280 != nullptr){
+                    BME280Values values;
+                    if(ctx->bme280->read(values)){
+                        char line[9];
+                        snprintf(line,  sizeof(line), "%4.0fhPa", values.pressure_hpa);
+                        ctx->lcd->printLine(0, "BME P");
+                        ctx->lcd->printLine(1, line);
+                    }else{
+                        ctx->lcd->printLine(0, "BME P");
+                        ctx->lcd->printLine(1, "ERR");
+                    }
+                }else{
+                    ctx->lcd->printLine(0, "BME P");
+                    ctx->lcd->printLine(1, "NO DEV");
+                }
+                break;
+            }
             case DisplayMode::I2cInfo:
                 ctx->lcd->printLine(0, "I2C DEV");
                 ctx->lcd->printLine(1, "3E 48");

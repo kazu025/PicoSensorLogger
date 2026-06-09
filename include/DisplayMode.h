@@ -5,5 +5,8 @@ enum class DisplayMode : uint8_t {
     AdcVoltage,
     LogStatus,
     I2cInfo,
+    BmeTemperature,
+    BmeHumidity,
+    BmePressure,
     Max
 };

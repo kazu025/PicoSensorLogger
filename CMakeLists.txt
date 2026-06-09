@@ -11,23 +11,24 @@ pico_sdk_init()
 include(FreeRTOS_Kernel_import.cmake)
 
 add_executable(${PROJECT_NAME}
-src/main.cpp
-src/EventLogger.cpp
-src/led25.c
-src/freertos_hooks.c
-src/LogEvent.cpp
-src/UartDma.cpp
-src/FlashLogStorage.cpp
-src/FlashDriver.cpp
-src/Crc32.cpp
-src/utility.cpp
-src/AdcLoggerTask.cpp
-src/task_command.cpp
-src/AEADT7410.cpp
-src/AQM0802.cpp
-src/TemperatureTask.cpp
-src/board_i2c.cpp
-src/ButtonTask.cpp
+    src/main.cpp
+    src/EventLogger.cpp
+    src/led25.c
+    src/freertos_hooks.c
+    src/LogEvent.cpp
+    src/UartDma.cpp
+    src/FlashLogStorage.cpp
+    src/FlashDriver.cpp
+    src/Crc32.cpp
+    src/utility.cpp
+    src/AdcLoggerTask.cpp
+    src/task_command.cpp
+    src/AEADT7410.cpp
+    src/AQM0802.cpp
+    src/TemperatureTask.cpp
+    src/board_i2c.cpp
+    src/ButtonTask.cpp
+    src/BME280.cpp
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE

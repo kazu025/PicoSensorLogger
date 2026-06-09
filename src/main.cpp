@@ -23,6 +23,8 @@
 #include "board_i2c.h"
 #include "DisplayMode.h"
 #include "ButtonTask.h"
+#include "BME280.h"
+
 static FlashDriver* g_flash_driver = nullptr;
 static FlashLogStorage* g_log_storage = nullptr;
 static UartDma* g_uart_dma = nullptr;
@@ -129,7 +131,19 @@ int main()
 
     static AEADT7410 adt7410(i2c0, AEADT7410::DEFAULT_ADDR, i2c_mutex);
     static AQM0802 aqm0802(i2c0, AQM0802::DEFAULT_ADDR, i2c_mutex);
-
+    static BME280 bme280(i2c0, BME280::ADDR_0x76, i2c_mutex);
+    if(!bme280.init()){
+        printf("!!! BME280 init failed\n");
+    } else {
+        BME280Values values;
+        if(bme280.read(values)){
+        printf(
+            "BME280 T=%.2f C H=%.2f %% P=%.2f hPa\n",
+            values.temperature_c,
+            values.humidity_rh,
+            values.pressure_hpa);
+        }
+    }
     /* ----------------------------------*/
     /* === DisplayMode Queue         === */
     /* ----------------------------------*/
@@ -199,6 +213,7 @@ int main()
         &aqm0802,
         &logger,
         &storage,
+        &bme280,
         display_mode_queue};
     ok = xTaskCreate(
         temperature_task,

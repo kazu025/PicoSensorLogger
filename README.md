@@ -325,6 +325,135 @@ AQM0802 LCD
 
 `AdcVoltage`、`LogStatus`、`I2cInfo` は、今後の機能拡張を想定した仮表示です。
 
+## BME280 LCD Display Modes
+
+AE-BME280をI2Cバスに追加し、温度・湿度・気圧をAE-AQM0802 LCDに表示できるようにしました。
+
+BME280は既存のI2Cバスに接続しています。
+
+```text
+I2C0 SDA : GPIO4
+I2C0 SCL : GPIO5
+```
+
+現在のI2Cデバイス構成は以下です。
+
+| Device     | I2C Address | Description                              |
+| ---------- | ----------: | ---------------------------------------- |
+| AE-AQM0802 |      `0x3E` | 8x2 character LCD                        |
+| AE-ADT7410 |      `0x48` | Temperature sensor                       |
+| AE-BME280  |      `0x76` | Temperature / Humidity / Pressure sensor |
+
+起動時のI2Cスキャン例です。
+
+```text
+I2C scan start
+I2C device found: 0x3E ret=1
+I2C device found: 0x48 ret=1
+I2C device found: 0x76 ret=1
+I2C scan done
+```
+
+BME280のChip IDは `0x60` で確認しています。
+
+```text
+BME280 id=0x60 expect=0x60
+BME280::init OK
+```
+
+測定値の出力例です。
+
+```text
+BME280 T=25.37 C H=65.66 % P=998.65 hPa
+```
+
+### LCD Display Modes
+
+タクトスイッチを押すことで、LCD表示モードを切り替えます。
+
+BME280用に以下の表示モードを追加しました。
+
+| Mode            | LCD Line 1 | LCD Line 2 | Description |
+| --------------- | ---------- | ---------- | ----------- |
+| BME Temperature | `BME T`    | `25.37C`   | BME280の温度表示 |
+| BME Humidity    | `BME H`    | `65.7%`    | BME280の湿度表示 |
+| BME Pressure    | `BME P`    | `999hPa`   | BME280の気圧表示 |
+
+既存の表示モードと合わせると、現在のLCD表示は以下のようになります。
+
+| Mode           | Description     |
+| -------------- | --------------- |
+| Temperature    | AE-ADT7410の温度表示 |
+| AdcVoltage     | ADC電圧表示         |
+| LogStatus      | Flashログ件数表示     |
+| I2cInfo        | I2Cデバイス情報表示     |
+| BmeTemperature | AE-BME280の温度表示  |
+| BmeHumidity    | AE-BME280の湿度表示  |
+| BmePressure    | AE-BME280の気圧表示  |
+
+### Implementation
+
+BME280は `BME280` クラスとして実装しています。
+
+主な役割は以下です。
+
+* BME280のChip ID確認
+* 補正係数の読み出し
+* 温度・湿度・気圧のraw値取得
+* 補正計算
+* I2C MutexによるI2Cバス排他制御
+
+LCD表示は `TemperatureTask` 側で行っています。
+`ButtonTask` がタクトスイッチ押下を検出し、`DisplayMode` をQueue経由で `TemperatureTask` に通知します。
+
+```text
+Tact Switch
+    ↓
+ButtonTask
+    ↓ DisplayMode Queue
+TemperatureTask
+    ↓
+AQM0802 LCD
+```
+
+BME280もAE-AQM0802やAE-ADT7410と同じI2Cバスを共有しているため、I2Cアクセス時にはMutexを使用しています。
+
+### Initial Measurement Wait
+
+BME280は初期化直後にすぐ値を読むと、気圧値が不自然になる場合がありました。
+
+そのため、BME280の測定設定後に初回測定完了待ちを入れています。
+
+```cpp
+sleep_ms(1000);
+```
+
+この待ち時間を入れることで、気圧値が自然な値になりました。
+
+```text
+Before:
+BME280 T=22.04 C H=74.51 % P=713.70 hPa
+
+After:
+BME280 T=25.37 C H=65.66 % P=998.65 hPa
+```
+
+### Current Status
+
+現在のBME280対応状況は以下です。
+
+| Feature           | Status |
+| ----------------- | ------ |
+| I2C scanでBME280検出 | Done   |
+| Chip ID `0x60` 確認 | Done   |
+| 温度取得              | Done   |
+| 湿度取得              | Done   |
+| 気圧取得              | Done   |
+| LCDへの温度表示         | Done   |
+| LCDへの湿度表示         | Done   |
+| LCDへの気圧表示         | Done   |
+| タクトスイッチによる表示切り替え  | Done   |
+
 ## UART Commands
 
 UART経由でFlashログ操作用のコマンドを実行できます。
@@ -441,20 +570,15 @@ Git submodule化はしていません。
 | LogStatusの詳細表示 | 仮表示 |
 | I2C機器情報の詳細表示 | 仮表示 |
 
-## Future Work
+### Future Work
 
-今後の拡張候補です。
+今後の改善候補です。
 
-- ADC値をLCDへ実表示する
-- FlashLogStorageの状態をLCDへ表示する
-- I2Cスキャン結果をLCDへ表示する
-- LCD表示モードをUARTコマンドからも切り替える
-- AE-BME280に対応する
-- MPU-6050に対応する
-- LCD表示内容をより見やすく整理する
-- Python解析ツールを強化する
-- Pico Wを使ってWi-Fi送信する
-
+* BME280の値を周期的にログ保存する
+* BME280専用のEnvironmentTaskを作る
+* LCD表示処理をDisplayTaskとして分離する
+* 温度・湿度・気圧を1画面で順番に自動表示する
+* Pico Wを使ってBME280の測定値をWi-Fi送信する
 ## License
 
 MIT License
