@@ -3,16 +3,44 @@
 
 #include <stdio.h>
 #include <string.h>
+#include "FlashBusy.h"
 
 //#define DEBUG_FlashLogStorage
+/* Flash操作用ロック関数 */
+static bool lock_shared_io(SemaphoreHandle_t mutex, TickType_t timeout_ticks)
+{
+    if(mutex == nullptr){
+        return true;
+    }
 
+    return xSemaphoreTake(mutex, timeout_ticks) == pdTRUE;
+}
+
+static void unlock_shared_io(SemaphoreHandle_t mutex)
+{
+    if(mutex != nullptr){
+        xSemaphoreGive(mutex);
+    }
+}
 FlashLogStorage::FlashLogStorage(FlashDriver& flash)
-    : FlashLogStorage(flash, LOG_START_ADDR, LOG_END_ADDR){}
-FlashLogStorage::FlashLogStorage(FlashDriver& flash, uint32_t start_addr, uint32_t end_addr)
-    : flash_(flash), write_addr_(0), oldest_addr_(0), newest_addr_(0), newest_seq_(0),
-        valid_frame_count_(0), mutex_(nullptr), initialized_(false){
-        config_.start_addr = start_addr;
-        config_.end_addr   = end_addr;
+    : FlashLogStorage(flash, LOG_START_ADDR, LOG_END_ADDR, nullptr){}
+FlashLogStorage::FlashLogStorage(
+    FlashDriver& flash,
+    uint32_t start_addr,
+    uint32_t end_addr,
+    SemaphoreHandle_t shared_io_mutex
+)
+    : flash_(flash),
+      config_{start_addr, end_addr},
+      write_addr_(0),
+      oldest_addr_(0),
+      newest_addr_(0),
+      newest_seq_(0),
+      valid_frame_count_(0),
+      shared_io_mutex_(shared_io_mutex),
+      initialized_(false),
+      mutex_(nullptr)
+{
 }
 /*
     mutex
@@ -76,12 +104,22 @@ bool FlashLogStorage::eraseLogArea(){
     MutexGuard guard(*this);
     if(!guard.locked()) return false;
 
+    g_flash_maintenance_busy = true;
+
     for(uint32_t addr = config_.start_addr; addr < config_.end_addr; addr += FlashDriver::SECTOR_SIZE){
-        if(!flash_.sectorErase(addr)){
+        if(!lock_shared_io(shared_io_mutex_, pdMS_TO_TICKS(1000))){
+            printf("!!! eraseLogArea: shared_io_mutex timeout\n");
+            return false;
+        }
+        bool ok = flash_.sectorErase(addr);
+        unlock_shared_io(shared_io_mutex_);
+        if(!ok){
             printf("!!! error eraseLogArea address: 0x%08x\n", addr);
             return false;
-        }    
+        }
     }    
+    g_flash_maintenance_busy = false;
+
     write_addr_ = config_.start_addr;
     oldest_addr_ = config_.start_addr;
     newest_addr_ = config_.start_addr;
@@ -130,7 +168,14 @@ bool FlashLogStorage::append(const uint8_t* data, size_t len){
         eraseの前に、そのsector内の既存フレームをindexから除外する*/
     if(isSectorStart(addr)){
         invalidateFramesInErasedSector(addr);
-        if(!flash_.sectorErase(addr)){
+        if(!lock_shared_io(shared_io_mutex_, pdMS_TO_TICKS(1000))){
+            printf("!!! %s: shared_io_mutex timeout before sectorErase\n", __func__);
+            rebuildIndexFromFlash();
+            return false;
+        }
+        bool ok =flash_.sectorErase(addr);
+        unlock_shared_io(shared_io_mutex_);
+        if(!ok){
             printf("!!! %s:sectorErase failed addr=0x%08X\n", __func__, addr);
             rebuildIndexFromFlash();
             return false;
@@ -153,8 +198,14 @@ bool FlashLogStorage::append(const uint8_t* data, size_t len){
             rebuildIndexFromFlash();
             return false;
         }
-
-        if(!flash_.pageProgram(addr, p, chunk)){
+        if(!lock_shared_io(shared_io_mutex_, pdMS_TO_TICKS(1000))){
+            printf("!!! %s: shared_io_mutex timeout before pageProgram\n", __func__);
+            rebuildIndexFromFlash();
+            return false;
+        }
+        bool ok = flash_.pageProgram(addr, p, chunk);
+        unlock_shared_io(shared_io_mutex_);
+        if(!ok){
             printf("!!! %s: pageProgram failed addr=0x%08X chunk=%u\n", __func__, addr, static_cast<unsigned>(chunk));
             write_addr_ = old_write_addr;
             rebuildIndexFromFlash();

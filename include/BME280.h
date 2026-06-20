@@ -30,7 +30,7 @@ public:
     bool read(BME280Values& out);
 
 private:
-    static constexpr uint32_t I2C_TIMEOUT_US = 3000;
+    static constexpr uint32_t I2C_TIMEOUT_US = 50000;
 
     static constexpr uint8_t REG_CALIB00   = 0x88;
     static constexpr uint8_t REG_CALIB26   = 0xE1;
@@ -75,7 +75,7 @@ private:
     SemaphoreHandle_t i2c_mutex_;
     Calibration cal_{};
 
-    void lockI2c();
+    bool lockI2c();
     void unlockI2c();
 
     bool readRegister8(uint8_t reg, uint8_t& value);

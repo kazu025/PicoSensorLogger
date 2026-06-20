@@ -137,7 +137,10 @@ bool AQM0802::write(uint8_t control, uint8_t value)
 {
     uint8_t buf[2] = {control, value};
 
-    lockI2c();
+    if(!lockI2c()){
+        printf("!!! AQM0802::write shared_io_mutex timeout\n");
+        return false;
+    }
 
     int ret = i2c_write_timeout_us(
         i2c_port_,
@@ -164,11 +167,13 @@ void AQM0802::delayMs(uint32_t ms)
     }
 }
 
-void AQM0802::lockI2c()
+bool AQM0802::lockI2c()
 {
-    if(i2c_mutex_ != nullptr){
-        xSemaphoreTake(i2c_mutex_, portMAX_DELAY);
+    if(i2c_mutex_ == nullptr){
+        return true;
     }
+
+    return xSemaphoreTake(i2c_mutex_, pdMS_TO_TICKS(1000)) == pdTRUE;
 }
 
 void AQM0802::unlockI2c()

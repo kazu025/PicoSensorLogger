@@ -36,6 +36,6 @@ private:
     bool readTempRaw(uint8_t& msb, uint8_t& lsb);
     static float convertTemp(uint8_t msb, uint8_t lsb);
 
-    void lockI2c();
+    bool lockI2c();
     void unlockI2c();
 };

@@ -24,7 +24,12 @@
 #include "DisplayMode.h"
 #include "ButtonTask.h"
 #include "BME280.h"
+#include "EnvironmentTask.h"
 
+#ifdef RP2040_DEBUG_TIMER_NO_PAUSE
+/* for debug デバッグ時にタイマを止めない */
+#include "hardware/structs/timer.h"
+#endif
 static FlashDriver* g_flash_driver = nullptr;
 static FlashLogStorage* g_log_storage = nullptr;
 static UartDma* g_uart_dma = nullptr;
@@ -48,6 +53,7 @@ static constexpr UBaseType_t BUTTON_TASK_PRIORITY       = 1;
 static constexpr uint32_t LOG_START_ADDR = 0x00001000;
 static constexpr uint32_t LOG_END_ADDR   = 0x00101000;
 
+
 static AppContext app_ctx;
 static QueueHandle_t display_mode_queue = nullptr;
 static void getFreeHeapSize(const char *s)
@@ -58,6 +64,10 @@ static void getFreeHeapSize(const char *s)
 int main()
 {
     stdio_init_all();
+#ifdef RP2040_DEBUG_TIMER_NO_PAUSE
+    timer_hw->dbgpause = 0;
+    timer_hw->pause = 0;
+#endif
     sleep_ms(2000);
 
     printf("start log \r\n");
@@ -89,11 +99,21 @@ int main()
         while(true)     tight_loop_contents();
     }
     g_flash_driver = &flash;
+
+    /* ----------------------------------*/
+    /* === Shared IO Mutex           === */
+    /* ----------------------------------*/
+    // I2C通信とFlash書き込みを同時に実行させないための共通Mutex
+    SemaphoreHandle_t shared_io_mutex = xSemaphoreCreateMutex();
+    if(shared_io_mutex == nullptr){
+        printf("!!! xSemaphoreCreateMutex(shared_io) failed\n");
+        while(true)     tight_loop_contents();
+    }
     
     /* ----------------------------------*/
     /* === Flashストレージ           === */
     /* ----------------------------------*/
-    static FlashLogStorage storage(flash, LOG_START_ADDR, LOG_END_ADDR);
+    static FlashLogStorage storage(flash, LOG_START_ADDR, LOG_END_ADDR, shared_io_mutex);
     if(!storage.init()){
         printf("!!! storage.init() : failed\n");
         while(true)     tight_loop_contents();
@@ -123,15 +143,10 @@ int main()
     // I2C: AE-ADT7410 と AE-AQM0802 で共有
     board_i2c_init(i2c0, I2C_SDA_PIN, I2C_SCL_PIN, I2C_BAUDRATE);
     scan_i2c_bus(i2c0);
-    SemaphoreHandle_t i2c_mutex = xSemaphoreCreateMutex();
-    if(i2c_mutex == nullptr){
-        printf("!!! xSemaphoreCreateMutex(i2c) failed\n");
-        while(true)     tight_loop_contents();
-    }
-
-    static AEADT7410 adt7410(i2c0, AEADT7410::DEFAULT_ADDR, i2c_mutex);
-    static AQM0802 aqm0802(i2c0, AQM0802::DEFAULT_ADDR, i2c_mutex);
-    static BME280 bme280(i2c0, BME280::ADDR_0x76, i2c_mutex);
+    
+    static AEADT7410 adt7410(i2c0, AEADT7410::DEFAULT_ADDR, shared_io_mutex);
+    static AQM0802 aqm0802(i2c0, AQM0802::DEFAULT_ADDR, shared_io_mutex);
+    static BME280 bme280(i2c0, BME280::ADDR_0x76, shared_io_mutex);
     if(!bme280.init()){
         printf("!!! BME280 init failed\n");
     } else {
@@ -168,7 +183,20 @@ int main()
         while(true)  tight_loop_contents();
     }
     getFreeHeapSize("Logger task");
-
+    /* ============================== */
+    /* === Environment task            === */
+    /* ============================== */
+    static EnvironmentTaskContext environment_ctx ={
+        &bme280,
+        &logger,
+        5000
+    };
+    ok = xTaskCreate(environment_task, "environment", 2048, &environment_ctx, 1, nullptr);
+    if(ok!=pdPASS){
+        printf("!!! xTaskCreate(environment_task) failed\n");
+        while(true) tight_loop_contents();
+    }
+    getFreeHeapSize("Environment task");
     /* ============================== */
     /* === ADCタスク              === */
     /* ============================== */

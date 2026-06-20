@@ -11,12 +11,13 @@
 #include "led25.h"
 #include "DisplayMode.h"
 #include "AdcLoggerTask.h"
+#include "EnvironmentTask.h"
+#include "FlashBusy.h"
 
 static constexpr uint32_t TASK_PERIOD_MS = 1000;
 static constexpr bool ENABLE_TASK_START_LOG = true;
 static constexpr bool ENABLE_STACK_HWM_LOG = true;
 static constexpr uint32_t HWM_LOG_INTERVAL_COUNT = 60;
-
 static void log_temperature(EventLogger* logger, uint32_t timestamp_ms, float temperature_c, bool valid) {
     if(logger == nullptr || isLogPaused()){ return; }
 
@@ -26,7 +27,7 @@ static void log_temperature(EventLogger* logger, uint32_t timestamp_ms, float te
         valid ? "OK" : "NG"
     );
 }
-
+/* ------------------------------------------------------------------------------------------------------ */
 static void display_temperature(AQM0802* lcd, bool valid, uint32_t count, float temperature_c) {
     if(lcd == nullptr){ return; }
 
@@ -42,7 +43,27 @@ static void display_temperature(AQM0802* lcd, bool valid, uint32_t count, float 
     lcd->printLine(0, line1);
     lcd->printLine(1, line2);
 }
+/* ------------------------------------------------------------------------------------------------------ */
+static bool readAdt7410WithRetry(AEADT7410* sensor, float& temperature_c)
+{
+    if(sensor == nullptr){
+        return false;
+    }
 
+    constexpr int RETRY_COUNT = 3;
+
+    for(int i = 0; i < RETRY_COUNT; ++i){
+
+        if(sensor->readTemperature(temperature_c)){
+            return true;
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10));
+    }
+
+    return false;
+}
+/* ------------------------------------------------------------------------------------------------------ */
 void temperature_task(void* param)
 {
     auto* ctx = static_cast<TemperatureTaskContext*>(param);
@@ -82,6 +103,11 @@ void temperature_task(void* param)
     }
 
     while(true){
+        // Flash メンテナンス中は何もしない
+        if(isFlashMaintenanceBusy()){
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
         uint32_t timestamp_ms = to_ms_since_boot(get_absolute_time());
         
         /*
@@ -107,7 +133,7 @@ void temperature_task(void* param)
         }
 
         float temperature_c = 0.0f;
-        bool valid = ctx->sensor->readTemperature(temperature_c);
+        bool valid = readAdt7410WithRetry(ctx->sensor, temperature_c);
 
         if(!valid){
             /*
@@ -137,6 +163,9 @@ void temperature_task(void* param)
                 }
             }
         }
+        // --- LCDディスプレイ用　自動表示が切り替わる ---
+        //current_mode = static_cast<DisplayMode>(count % 7u);
+        // -----------------------------------------------
         if(lcd_initialized && ctx->lcd != nullptr){
             switch(current_mode){
             case DisplayMode::Temperature:
@@ -169,64 +198,52 @@ void temperature_task(void* param)
             }
             case DisplayMode::BmeTemperature:
             {
-                if(ctx->bme280 != nullptr){
-                    BME280Values values;
-                    if(ctx->bme280->read(values)){
-                        char line[9];
-                        snprintf(line,  sizeof(line), "%5.2fC", values.temperature_c);
-                        ctx->lcd->printLine(0, "BME T");
-                        ctx->lcd->printLine(1, line);
-                    }else{
-                        ctx->lcd->printLine(0, "BME T");
-                        ctx->lcd->printLine(1, "ERR");
-                    }
+                BME280Values values{};
+                uint32_t bme_timestamp_ms = 0;
+                if(getLatestBme280Values(values, bme_timestamp_ms)){
+                    char line[9];
+                    snprintf(line,  sizeof(line), "%5.2fC", static_cast<double>(values.temperature_c));
+                    ctx->lcd->printLine(0, "BME T");
+                    ctx->lcd->printLine(1, line);
                 }else{
                     ctx->lcd->printLine(0, "BME T");
-                    ctx->lcd->printLine(1, "NO DEV");
+                    ctx->lcd->printLine(1, "NO DATA");
                 }
                 break;
             }
             case DisplayMode::BmeHumidity:
             {
-                if(ctx->bme280 != nullptr){
-                    BME280Values values;
-                    if(ctx->bme280->read(values)){
-                        char line[9];
-                        snprintf(line,  sizeof(line), "%5.1f%%", values.humidity_rh);
-                        ctx->lcd->printLine(0, "BME H");
-                        ctx->lcd->printLine(1, line);
-                    }else{
-                        ctx->lcd->printLine(0, "BME H");
-                        ctx->lcd->printLine(1, "ERR");
-                    }
+                BME280Values values{};
+                uint32_t bme_timestamp_ms = 0;
+                if(getLatestBme280Values(values, bme_timestamp_ms)){
+                    char line[9];
+                    snprintf(line,  sizeof(line), "%5.1f%%", static_cast<double>(values.humidity_rh));
+                    ctx->lcd->printLine(0, "BME H");
+                    ctx->lcd->printLine(1, line);
                 }else{
                     ctx->lcd->printLine(0, "BME H");
-                    ctx->lcd->printLine(1, "NO DEV");
+                    ctx->lcd->printLine(1, "NO DATA");
                 }
                 break;
             }
             case DisplayMode::BmePressure:
             {
-                if(ctx->bme280 != nullptr){
-                    BME280Values values;
-                    if(ctx->bme280->read(values)){
-                        char line[9];
-                        snprintf(line,  sizeof(line), "%4.0fhPa", values.pressure_hpa);
-                        ctx->lcd->printLine(0, "BME P");
-                        ctx->lcd->printLine(1, line);
-                    }else{
-                        ctx->lcd->printLine(0, "BME P");
-                        ctx->lcd->printLine(1, "ERR");
-                    }
+                BME280Values values{};
+                uint32_t bme_timestamp_ms = 0;
+                if(getLatestBme280Values(values, bme_timestamp_ms)){
+                    char line[9];
+                    snprintf(line,  sizeof(line), "%4.0fhPa", static_cast<double>(values.pressure_hpa));
+                    ctx->lcd->printLine(0, "BME P");
+                    ctx->lcd->printLine(1, line);
                 }else{
                     ctx->lcd->printLine(0, "BME P");
-                    ctx->lcd->printLine(1, "NO DEV");
+                    ctx->lcd->printLine(1, "NO DATA");
                 }
                 break;
             }
             case DisplayMode::I2cInfo:
                 ctx->lcd->printLine(0, "I2C DEV");
-                ctx->lcd->printLine(1, "3E 48");
+                ctx->lcd->printLine(1, "3E 48 76");
                 break;
             default:
                 break;

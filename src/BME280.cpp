@@ -2,18 +2,21 @@
 
 #include <cstdio>
 #include "pico/stdlib.h"
-
+#
 BME280::BME280(i2c_inst_t* i2c_port, uint8_t address, SemaphoreHandle_t i2c_mutex)
     : i2c_port_(i2c_port), address_(address), i2c_mutex_(i2c_mutex)
 {}
-
-void BME280::lockI2c(){
-    if(i2c_mutex_ != nullptr){
-        xSemaphoreTake(i2c_mutex_, portMAX_DELAY);
+bool BME280::lockI2c()
+{
+    if(i2c_mutex_ == nullptr){
+        return true;
     }
+
+    return xSemaphoreTake(i2c_mutex_, pdMS_TO_TICKS(1000)) == pdTRUE;
 }
 
-void BME280::unlockI2c(){
+void BME280::unlockI2c()
+{
     if(i2c_mutex_ != nullptr){
         xSemaphoreGive(i2c_mutex_);
     }
@@ -42,7 +45,10 @@ bool BME280::readRegister8(uint8_t reg, uint8_t& value){
 bool BME280::writeRegister8(uint8_t reg, uint8_t value){
     uint8_t buffer[2] = {reg, value};
 
-    lockI2c();
+    if(!lockI2c()){
+        printf("!!! BME280::readRegister8 shared_io_mutex timeout\n");
+        return false;
+    }
     int ret = i2c_write_timeout_us(i2c_port_, address_, buffer, sizeof(buffer), false, I2C_TIMEOUT_US);
     unlockI2c();
 
@@ -58,11 +64,14 @@ bool BME280::readRegisters(uint8_t start_reg, uint8_t* buffer, size_t length){
         return false;
     }
 
-    lockI2c();
+    if(!lockI2c()){
+        printf("!!! BME280::readRegisters shared_io_mutex timeout\n");
+        return false;
+    }
     int ret = i2c_write_timeout_us(i2c_port_, address_, &start_reg, 1, true, I2C_TIMEOUT_US);
     if(ret != 1){
         unlockI2c();
-        printf("!!! BME280::readRegisters write failed reg=0x%02X ret=%d\n", start_reg, ret);
+//        printf("!!! BME280::readRegisters write failed reg=0x%02X ret=%d\n", start_reg, ret);
         return false;
     }
     ret = i2c_read_timeout_us(i2c_port_, address_, buffer, length, false, I2C_TIMEOUT_US);

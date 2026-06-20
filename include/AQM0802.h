@@ -46,6 +46,6 @@ private:
     bool write(uint8_t control, uint8_t value);
     void delayMs(uint32_t ms);
 
-    void lockI2c();
+    bool lockI2c();
     void unlockI2c();
 };

@@ -16,14 +16,14 @@ class FlashLogStorage{
 public:
     /* === ログ保存領域 === */
     static constexpr uint32_t LOG_START_ADDR = 0x00001000;
-    static constexpr uint32_t LOG_END_ADDR   = 0x00041000;
+    static constexpr uint32_t LOG_END_ADDR   = 0x00101000;
     struct Config {
         uint32_t start_addr;
         uint32_t end_addr;
     };
     public:
     FlashLogStorage(FlashDriver& flash);
-    FlashLogStorage(FlashDriver& flash, uint32_t start_addr, uint32_t end_addr);
+    FlashLogStorage(FlashDriver& flash, uint32_t start_addr, uint32_t end_addr, SemaphoreHandle_t shared_io_mutex);
     bool init();
     bool eraseLogArea();
     bool append(const uint8_t* data, size_t len);
@@ -58,6 +58,7 @@ private:
     uint32_t newest_addr_;
     uint32_t newest_seq_;
     uint32_t valid_frame_count_;
+    SemaphoreHandle_t   shared_io_mutex_;
     bool initialized_;
     
     bool isConfigValid(const Config& config) const;

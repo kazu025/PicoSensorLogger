@@ -29,7 +29,21 @@ add_executable(${PROJECT_NAME}
     src/board_i2c.cpp
     src/ButtonTask.cpp
     src/BME280.cpp
+    src/EnvironmentTask.cpp
+    src/FlashBusy.cpp
 )
+# 定義されていなかったら、ONとする
+# defaultで、定義されていなかったら、デバッグ時にタイマを止めるという設定
+option(RP2040_DEBUG_TIMER_NO_PAUSE
+    "Keep RP2040 timer running while debugger halts cores"
+    ON
+)
+
+if(RP2040_DEBUG_TIMER_NO_PAUSE)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE
+        RP2040_DEBUG_TIMER_NO_PAUSE=1
+    )
+endif()
 
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/include
